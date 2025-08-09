@@ -8,6 +8,5 @@ variable "vm_admin_username" {
   default = "azureuser"
 }
 variable "ssh_public_key" {
-  description = "Path to SSH public key"
-  default     = "~/.ssh/id_rsa.pub"
+  default = "/mnt/c/Users/noitr/.ssh/id_rsa.pub"
 }
