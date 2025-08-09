@@ -1,0 +1,54 @@
+---
+- name: Setup VM with Docker and deploy containers
+  hosts: web
+  become: true
+
+  tasks:
+    - name: Install required packages
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - software-properties-common
+        state: present
+        update_cache: yes
+
+    - name: Add Docker GPG key
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+
+    - name: Add Docker repository
+      apt_repository:
+        repo: deb [arch=amd64] https://download.docker.com/linux/ubuntu focal stable
+        state: present
+
+    - name: Install Docker and Docker Compose plugin
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-compose-plugin
+        state: present
+        update_cache: yes
+
+    - name: Add user 'azureuser' to docker group
+      user:
+        name: azureuser
+        groups: docker
+        append: yes
+
+    - name: Create docker-compose.yml on remote
+      copy:
+        src: docker-compose.yml
+        dest: /home/azureuser/docker-compose.yml
+        owner: azureuser
+        group: azureuser
+        mode: '0644'
+
+    - name: Run docker-compose up
+      command: docker compose -f /home/azureuser/docker-compose.yml up -d
+      args:
+        chdir: /home/azureuser
