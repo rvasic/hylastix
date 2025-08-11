@@ -25,7 +25,9 @@ jobs:
       - name: Azure login (client secret)
         uses: azure/login@v2
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
 
       - name: Setup Terraform
@@ -56,6 +58,7 @@ jobs:
       - name: Terraform destroy (bootstrap)
         if: ${{ inputs.destroy_backend == 'true' }}
         working-directory: terraform/backend-bootstrap
+
         run: |
           terraform destroy -auto-approve \
             -var "location=${{ vars.TF_LOCATION || 'westeurope' }}" \
