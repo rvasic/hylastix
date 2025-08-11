@@ -16,6 +16,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Show current account
+        run: |
+          az account show
+          az account list --output table
+
       - name: Azure login (OIDC)
         uses: azure/login@v2
         with:
