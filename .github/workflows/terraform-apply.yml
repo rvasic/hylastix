@@ -45,8 +45,7 @@ jobs:
             -var "backend_resource_group=${{ vars.BACKEND_RG }}" \
             -var "backend_storage_account=${{ vars.BACKEND_SA }}" \
             -var "backend_container=${{ vars.BACKEND_CN }}" \
-            -var "backend_key=${{ vars.BACKEND_KEY }}" \
-            -var "sp_client_id=${{ fromJSON(secrets.AZURE_CREDENTIALS).clientId }}"
+            -var "backend_key=${{ vars.BACKEND_KEY }}" 
 
       # ---------- MAIN (remote state) ----------
       - name: Terraform init (main with backend)
