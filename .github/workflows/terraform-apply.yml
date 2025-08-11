@@ -16,7 +16,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Azure login (OIDC)
+      # (Optional) Just show az version before login
+      - name: Azure CLI version
+        run: az version
+
+      - name: Azure login
         uses: azure/login@v2
         with:
           client-id:       ${{ secrets.AZURE_CLIENT_ID }}
