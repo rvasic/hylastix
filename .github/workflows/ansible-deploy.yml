@@ -16,39 +16,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Azure login
+      - name: Azure login (OIDC)
         uses: azure/login@v2
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
-
-      - name: Set subscription (optional but nice)
-        run: az account set --subscription ${{ fromJSON(secrets.AZURE_CREDENTIALS).subscriptionId }}
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.7.5
 
-      # ---- Fetch backend access key (no bootstrap state needed) ----
-      - name: Get storage account key for backend
-        id: sa
-        run: |
-          SA_KEY=$(az storage account keys list \
-            -g "${{ vars.BACKEND_RG }}" \
-            -n "${{ vars.BACKEND_SA }}" \
-            --query "[0].value" -o tsv)
-          echo "::add-mask::$SA_KEY"
-          echo "SAKEY=$SA_KEY" >> $GITHUB_OUTPUT
-
-      - name: Terraform init (main with remote backend)
+      - name: Terraform init (main with backend)
         working-directory: terraform
         run: |
           terraform init \
             -backend-config="resource_group_name=${{ vars.BACKEND_RG }}" \
             -backend-config="storage_account_name=${{ vars.BACKEND_SA }}" \
             -backend-config="container_name=${{ vars.BACKEND_CN }}" \
-            -backend-config="key=${{ vars.BACKEND_KEY }}" \
-            -backend-config="access_key=${{ steps.sa.outputs.SAKEY }}"
+            -backend-config="key=${{ vars.BACKEND_KEY }}"
 
       - name: Get outputs (public_ip, admin_username)
         id: tfout
@@ -67,7 +54,7 @@ jobs:
           python3 -m pip install --upgrade pip
           pip install ansible
 
-      - name: Create ephemeral inventory
+      - name: Create inventory from TF outputs
         run: |
           mkdir -p ansible
           cat > ansible/inventory.ini <<EOF
@@ -79,8 +66,6 @@ jobs:
       - name: Run playbook
         working-directory: ansible
         env:
-          # turn off strict host key checking for first connection
-          ANSIBLE_HOST_KEY_CHECKING: "False"
           KC_ADMIN_USER: ${{ secrets.KC_ADMIN_USER || 'admin' }}
           KC_ADMIN_PASS: ${{ secrets.KC_ADMIN_PASS || 'adminpassword' }}
         run: |
