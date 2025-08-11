@@ -25,11 +25,3 @@ variable "backend_key" {
   type        = string
   default     = "hylastix.tfstate"
 }
-
-# Optional: grant the GitHub Actions SP data-plane access
-# Pass your SP application (client) ID; leave empty to skip.
-variable "sp_client_id" {
-  description = "Application (client) ID of the GitHub Actions service principal for role assignment"
-  type        = string
-  default     = ""
-}
