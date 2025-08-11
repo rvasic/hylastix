@@ -6,7 +6,7 @@ terraform {
       version = "~> 3.0"
     }
   }
-  backend "azurerm" {}  # << keep empty; we feed config via -backend-config
+  backend "azurerm" {}
 }
 
 provider "azurerm" {
