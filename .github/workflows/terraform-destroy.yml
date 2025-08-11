@@ -1,0 +1,70 @@
+name: terraform-destroy
+on:
+  workflow_dispatch:
+    inputs:
+      destroy_backend:
+        description: "Also destroy backend storage (state)?"
+        type: choice
+        options: ["false", "true"]
+        default: "false"
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  TF_IN_AUTOMATION: "true"
+  ARM_USE_OIDC: "true"
+
+jobs:
+  destroy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.7.5
+
+      # Recreate same bootstrap variables (naming must match apply run)
+      # We’ll get them from outputs (no need to recompute)
+      - name: Terraform init (bootstrap)
+        working-directory: terraform/backend-bootstrap
+        run: terraform init
+
+      - name: Ensure bootstrap state is refreshed
+        working-directory: terraform/backend-bootstrap
+        run: terraform apply -refresh-only -auto-approve
+
+      - name: Read backend outputs
+        id: bkend
+        working-directory: terraform/backend-bootstrap
+        run: |
+          echo "RG=$(terraform output -raw backend_resource_group)" >> $GITHUB_OUTPUT
+          echo "SA=$(terraform output -raw backend_storage_account)" >> $GITHUB_OUTPUT
+          echo "CN=$(terraform output -raw backend_container)" >> $GITHUB_OUTPUT
+          echo "KEY=$(terraform output -raw backend_key)" >> $GITHUB_OUTPUT
+
+      - name: Terraform init (main with backend)
+        working-directory: terraform
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ steps.bkend.outputs.RG }}" \
+            -backend-config="storage_account_name=${{ steps.bkend.outputs.SA }}" \
+            -backend-config="container_name=${{ steps.bkend.outputs.CN }}" \
+            -backend-config="key=${{ steps.bkend.outputs.KEY }}"
+
+      - name: Terraform destroy (main)
+        working-directory: terraform
+        run: terraform destroy -auto-approve
+
+      - name: Optionally destroy backend
+        if: ${{ inputs.destroy_backend == 'true' }}
+        working-directory: terraform/backend-bootstrap
+        run: terraform destroy -auto-approve || true
