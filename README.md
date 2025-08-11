@@ -98,9 +98,9 @@ The setup uses:
 ---
 
 ## Possible Extensions
-- Automatic TLS with Let’s Encrypt
-- Managed Postgres for HA
-- CI/CD for HTML content updates
+- Use Let's Encrypt for automatic TLS certificates
+- Use a managed PostgreSQL service for convenience
+- Automate Keycloak user creation from a file or script
 - AKS migration for scale
 
 ---
