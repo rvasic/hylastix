@@ -13,3 +13,9 @@ output "backend_container" {
 output "backend_key" {
   value = var.backend_key
 }
+
+# NEW: use this to init the azurerm backend without RBAC
+output "storage_account_access_key" {
+  value     = azurerm_storage_account.tfstate.primary_access_key
+  sensitive = true
+}

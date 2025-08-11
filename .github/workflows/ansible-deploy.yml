@@ -13,42 +13,29 @@ env:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
-      - name: Azure login
+      - name: Azure login (OIDC)
         uses: azure/login@v2
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.7.5
 
-      # read backend cfg from bootstrap state
-      - name: Terraform init (bootstrap)
-        working-directory: terraform/backend-bootstrap
-        run: terraform init
-
-      - name: Read backend outputs
-        id: bkend
-        working-directory: terraform/backend-bootstrap
-        run: |
-          echo "RG=$(terraform output -raw backend_resource_group)" >> $GITHUB_OUTPUT
-          echo "SA=$(terraform output -raw backend_storage_account)" >> $GITHUB_OUTPUT
-          echo "CN=$(terraform output -raw backend_container)" >> $GITHUB_OUTPUT
-          echo "KEY=$(terraform output -raw backend_key)" >> $GITHUB_OUTPUT
-
       - name: Terraform init (main with backend)
         working-directory: terraform
         run: |
           terraform init \
-            -backend-config="resource_group_name=${{ steps.bkend.outputs.RG }}" \
-            -backend-config="storage_account_name=${{ steps.bkend.outputs.SA }}" \
-            -backend-config="container_name=${{ steps.bkend.outputs.CN }}" \
-            -backend-config="key=${{ steps.bkend.outputs.KEY }}"
+            -backend-config="resource_group_name=${{ vars.BACKEND_RG }}" \
+            -backend-config="storage_account_name=${{ vars.BACKEND_SA }}" \
+            -backend-config="container_name=${{ vars.BACKEND_CN }}" \
+            -backend-config="key=${{ vars.BACKEND_KEY }}"
 
       - name: Get outputs (public_ip, admin_username)
         id: tfout
@@ -67,7 +54,7 @@ jobs:
           python3 -m pip install --upgrade pip
           pip install ansible
 
-      - name: Create ephemeral inventory
+      - name: Create inventory from TF outputs
         run: |
           mkdir -p ansible
           cat > ansible/inventory.ini <<EOF
