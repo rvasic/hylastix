@@ -16,30 +16,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Show current account
+      # (Optional) Just show az version before login
+      - name: Azure CLI version
+        run: az version
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          # If you're using the JSON secret (service principal with secret):
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          # (If you later switch to OIDC, replace with client-id/tenant-id/subscription-id inputs)
+
+      # Helpful to confirm the subscription after login
+      - name: Show current account (after login)
         run: |
           az account show
           az account list --output table
-
-      - name: Azure login (OIDC)
-        uses: azure/login@v2
-        with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          # Set subscription explicitly just in case:
+          az account set --subscription ${{ fromJSON(secrets.AZURE_CREDENTIALS).subscriptionId }}
 
       - name: Prepare naming/env
         id: prep
         run: |
-          # region & admin user (defaults if not provided)
           echo "TF_LOCATION=${{ secrets.TF_LOCATION || 'westeurope' }}" >> $GITHUB_ENV
           echo "VM_ADMIN_USERNAME=${{ secrets.VM_ADMIN_USERNAME || 'azureuser' }}" >> $GITHUB_ENV
 
-          # safe-ish name seeds
           REPO_SAFE=$(echo '${{ github.repository }}' | tr '[:upper:]/' '[:lower:]-' | tr -cd 'a-z0-9-')
           RUN_KEY=${{ github.run_id }}
 
-          # backend names (<=24 chars for SA; make it unique but short)
           RG_NAME="tfstate-${REPO_SAFE}-${RUN_KEY}"
-          SA_NAME="tf${RUN_KEY}${RANDOM}"    # storage acct: lowercase, <=24; random to avoid collisions
+          SA_NAME="tf${RUN_KEY}${RANDOM}"
           SA_NAME=$(echo "$SA_NAME" | tr -cd 'a-z0-9' | cut -c1-24)
 
           echo "BACKEND_RG=$RG_NAME" >> $GITHUB_ENV
