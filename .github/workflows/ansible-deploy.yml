@@ -51,7 +51,9 @@ jobs:
       - name: Setup SSH for Ansible
         run: |
           umask 077
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -H "${{ steps.tfout.outputs.PUBLIC_IP }}" >> ~/.ssh/known_hosts
 
       - name: Install Ansible
