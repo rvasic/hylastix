@@ -77,4 +77,4 @@ jobs:
           KC_ADMIN_PASS: ${{ secrets.KC_ADMIN_PASS || 'adminpassword' }}
         run: |
           ansible-playbook -i inventory.ini playbook.yml \
-            --extra-vars "vm_ip=${{ steps.tfout.outputs.PUBLIC_IP }} kc_admin_user=$KC_ADMIN_USER kc_admin_pass=$KC_ADMIN_PASS ssl_insecure_skip_verify=false"
+            --extra-vars "vm_ip=${{ steps.tfout.outputs.PUBLIC_IP }} kc_admin_user=$KC_ADMIN_USER kc_admin_pass=$KC_ADMIN_PASS ssl_insecure_skip_verify=true"
