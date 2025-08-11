@@ -2,7 +2,8 @@ resource "azurerm_public_ip" "vm_public_ip" {
   name                = "hylastix-public-ip"
   location            = var.location
   resource_group_name = azurerm_resource_group.rg.name
-  allocation_method   = "Dynamic"
+  allocation_method   = "Static"
+  sku                 = "Standard"
 }
 
 resource "azurerm_network_interface" "nic" {

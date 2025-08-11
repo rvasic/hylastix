@@ -1,16 +1,40 @@
 ---
-- name: Setup VM with Docker and deploy containers
+- name: Setup VM with Docker, deploy Keycloak + OAuth2 Proxy + Nginx
   hosts: web
   become: true
 
+  vars:
+    vm_ip: "{{ ansible_host }}"
+    realm: "master"
+    kc_admin_user: "admin"
+    kc_admin_pass: "adminpassword"
+    oauth2_client_id: "my-client"
+
+    ssl_insecure_skip_verify: true
+
+    cert_dir: /home/azureuser/certs
+    html_dir: /home/azureuser/html
+    nginx_conf_path: /home/azureuser/nginx.conf
+    compose_path: /home/azureuser/docker-compose.yml
+
+    static_index_content: |
+      <!doctype html>
+      <html><head><meta charset="utf-8"><title>Welcome</title></head>
+      <body style="font-family:sans-serif">
+        <h1>Welcome</h1>
+        <p>You are logged in via Keycloak.</p>
+      </body></html>
+
   tasks:
-    - name: Install required packages
+    - name: Install base packages
       apt:
         name:
           - apt-transport-https
           - ca-certificates
           - curl
           - software-properties-common
+          - openssl
+          - jq
         state: present
         update_cache: yes
 
@@ -19,12 +43,13 @@
         url: https://download.docker.com/linux/ubuntu/gpg
         state: present
 
-    - name: Add Docker repository
+    - name: Add Docker apt repo
       apt_repository:
-        repo: deb [arch=amd64] https://download.docker.com/linux/ubuntu focal stable
+        repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu focal stable"
         state: present
+        update_cache: yes
 
-    - name: Install Docker and Docker Compose plugin
+    - name: Install Docker engine + compose plugin
       apt:
         name:
           - docker-ce
@@ -32,23 +57,212 @@
           - containerd.io
           - docker-compose-plugin
         state: present
-        update_cache: yes
 
-    - name: Add user 'azureuser' to docker group
+    - name: Ensure docker service is running
+      service:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Add azureuser to docker group
       user:
         name: azureuser
         groups: docker
         append: yes
 
-    - name: Create docker-compose.yml on remote
+    - name: Create certs dir
+      file:
+        path: "{{ cert_dir }}"
+        state: directory
+        owner: azureuser
+        group: azureuser
+        mode: '0700'
+
+    - name: Generate self-signed cert with SAN=IP (if missing)
+      command: >
+        openssl req -x509 -nodes -days 365 -newkey rsa:2048
+        -keyout {{ cert_dir }}/tls.key
+        -out {{ cert_dir }}/tls.crt
+        -subj "/CN={{ vm_ip }}"
+        -addext "subjectAltName=IP:{{ vm_ip }}"
+      args:
+        creates: "{{ cert_dir }}/tls.crt"
+
+    - name: Fix cert permissions
+      file:
+        path: "{{ cert_dir }}/{{ item }}"
+        owner: azureuser
+        group: azureuser
+        mode: '0600'
+      loop:
+        - tls.crt
+        - tls.key
+
+    - name: Ensure HTML dir
+      file:
+        path: "{{ html_dir }}"
+        state: directory
+        owner: azureuser
+        group: azureuser
+        mode: '0755'
+
+    - name: Drop default index.html
       copy:
-        src: docker-compose.yml
-        dest: /home/azureuser/docker-compose.yml
+        dest: "{{ html_dir }}/index.html"
+        owner: azureuser
+        group: azureuser
+        mode: '0644'
+        content: "{{ static_index_content }}"
+
+    - name: Render nginx.conf
+      template:
+        src: nginx.conf.j2
+        dest: "{{ nginx_conf_path }}"
         owner: azureuser
         group: azureuser
         mode: '0644'
 
-    - name: Run docker-compose up
-      command: docker compose -f /home/azureuser/docker-compose.yml up -d
+    - name: Generate cookie secret for OAuth2 Proxy (32 bytes, base64)
+      set_fact:
+        oauth2_cookie_secret: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') | b64encode }}"
+
+    - name: Render docker-compose.yml (first pass; without client secret)
+      template:
+        src: docker-compose.yml.j2
+        dest: "{{ compose_path }}"
+        owner: azureuser
+        group: azureuser
+        mode: '0644'
+      vars:
+        oauth2_client_secret: ""
+        oauth2_cookie_secret: "{{ oauth2_cookie_secret }}"
+
+    - name: Bring stack up (first pass)
+      command: docker compose up -d
       args:
-        chdir: /home/azureuser
+        chdir: "/home/azureuser"
+
+    - name: Wait for Keycloak OIDC discovery
+      uri:
+        url: "https://{{ vm_ip }}:8443/realms/{{ realm }}/.well-known/openid-configuration"
+        method: GET
+        validate_certs: no
+      register: kc_ready
+      retries: 30
+      delay: 5
+      until: kc_ready.status|default(0) == 200
+
+    - name: Obtain Keycloak admin token
+      shell: |
+        curl -sk -X POST "https://{{ vm_ip }}:8443/realms/master/protocol/openid-connect/token" \
+          -d client_id=admin-cli \
+          -d username={{ kc_admin_user }} \
+          -d password={{ kc_admin_pass }} \
+          -d grant_type=password | jq -r '.access_token'
+      register: admin_token
+      changed_when: false
+
+    - name: Create/ensure client exists
+      uri:
+        url: "https://{{ vm_ip }}:8443/admin/realms/{{ realm }}/clients"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ admin_token.stdout }}"
+          Content-Type: application/json
+        body_format: json
+        body:
+          clientId: "{{ oauth2_client_id }}"
+          rootUrl: "https://{{ vm_ip }}/"
+          redirectUris: ["https://{{ vm_ip }}/*"]
+          webOrigins: ["https://{{ vm_ip }}"]
+          enabled: true
+          publicClient: false
+          standardFlowEnabled: true
+          serviceAccountsEnabled: true
+          directAccessGrantsEnabled: true
+        status_code: [201, 409]
+        validate_certs: no
+
+    - name: Get client UUID
+      uri:
+        url: "https://{{ vm_ip }}:8443/admin/realms/{{ realm }}/clients?clientId={{ oauth2_client_id }}"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ admin_token.stdout }}"
+        validate_certs: no
+      register: client_list
+
+    - name: Fail if client not found
+      fail:
+        msg: "Client {{ oauth2_client_id }} not found."
+      when: client_list.json | length == 0
+
+    - name: Fetch client secret
+      uri:
+        url: "https://{{ vm_ip }}:8443/admin/realms/{{ realm }}/clients/{{ client_list.json[0].id }}/client-secret"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ admin_token.stdout }}"
+        validate_certs: no
+      register: client_secret_resp
+
+    - name: Save client secret fact
+      set_fact:
+        oauth2_client_secret_val: "{{ client_secret_resp.json.value }}"
+
+    - name: Re-render docker-compose with client secret
+      template:
+        src: docker-compose.yml.j2
+        dest: "{{ compose_path }}"
+        owner: azureuser
+        group: azureuser
+        mode: '0644'
+      vars:
+        oauth2_client_secret: "{{ oauth2_client_secret_val }}"
+        oauth2_cookie_secret: "{{ oauth2_cookie_secret }}"
+
+    - name: Restart stack with updated config
+      command: docker compose up -d
+      args:
+        chdir: "/home/azureuser"
+
+    # ---------- TEST USER ----------
+    - name: Create test user 'rajko' (optional)
+      uri:
+        url: "https://{{ vm_ip }}:8443/admin/realms/{{ realm }}/users"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ admin_token.stdout }}"
+          Content-Type: application/json
+        body_format: json
+        body:
+          username: "rajko"
+          email: "rajko@example.com"
+          enabled: true
+          emailVerified: true
+        status_code: [201, 409]
+        validate_certs: no
+
+    - name: Lookup user 'rajko' id
+      uri:
+        url: "https://{{ vm_ip }}:8443/admin/realms/{{ realm }}/users?username=rajko"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ admin_token.stdout }}"
+        validate_certs: no
+      register: rajko_list
+
+    - name: Set 'rajko' password (non-temporary)
+      uri:
+        url: "https://{{ vm_ip }}:8443/admin/realms/{{ realm }}/users/{{ rajko_list.json[0].id }}/reset-password"
+        method: PUT
+        headers:
+          Authorization: "Bearer {{ admin_token.stdout }}"
+          Content-Type: application/json
+        body_format: json
+        body:
+          type: "password"
+          value: "Test123!"
+          temporary: false
+        status_code: 204
+        validate_certs: no

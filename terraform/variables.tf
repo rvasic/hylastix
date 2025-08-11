@@ -2,7 +2,7 @@ variable "resource_group_name" {
   default = "hylastix-rg"
 }
 variable "location" {
-  default = "West Europe"
+  default = "westeurope"
 }
 variable "vm_admin_username" {
   default = "azureuser"

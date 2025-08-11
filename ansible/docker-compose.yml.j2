@@ -1,0 +1,97 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:14
+    environment:
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: keycloak
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:20.0.3
+    command: start-dev
+    environment:
+      KC_DB: postgres
+      KC_DB_URL_HOST: postgres
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: password
+      KEYCLOAK_ADMIN: "{{ kc_admin_user }}"
+      KEYCLOAK_ADMIN_PASSWORD: "{{ kc_admin_pass }}"
+      KC_HTTPS_CERTIFICATE_FILE: /etc/x509/https/tls.crt
+      KC_HTTPS_CERTIFICATE_KEY_FILE: /etc/x509/https/tls.key
+      KC_HTTP_ENABLED: "false"
+      KC_HTTPS_REQUIRED: "all"
+      KC_HOSTNAME_STRICT: "false"
+      KC_PROXY: "passthrough"
+    ports:
+      - "8443:8443"
+    volumes:
+      - ./certs:/etc/x509/https:ro
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
+  oauth2-proxy:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.6.0
+    environment:
+      # OIDC with Keycloak issuer
+      OAUTH2_PROXY_PROVIDER: oidc
+      OAUTH2_PROXY_OIDC_ISSUER_URL: "https://{{ vm_ip }}:8443/realms/{{ realm }}"
+      OAUTH2_PROXY_CLIENT_ID: "{{ oauth2_client_id }}"
+      # first pass may not have a secret yet -> default to empty
+      OAUTH2_PROXY_CLIENT_SECRET: "{{ oauth2_client_secret | default('') }}"
+      # generate via set_fact before rendering; safe-default for first pass
+      OAUTH2_PROXY_COOKIE_SECRET: "{{ oauth2_cookie_secret | default('') }}"
+
+      # Browser-visible redirect (TLS at nginx :443)
+      OAUTH2_PROXY_REDIRECT_URL: "https://{{ vm_ip }}/oauth2/callback"
+
+      # Protect static site served by nginx
+      OAUTH2_PROXY_UPSTREAMS: "http://nginx:80/"
+
+      # HTTP-only listener inside container
+      OAUTH2_PROXY_HTTP_ADDRESS: "0.0.0.0:4180"
+
+      # Auth behavior
+      OAUTH2_PROXY_EMAIL_DOMAINS: "*"
+      OAUTH2_PROXY_COOKIE_SECURE: "true"
+      OAUTH2_PROXY_SET_XFORWARDED_PROTO: "true"
+      OAUTH2_PROXY_SET_XAUTHREQUEST: "true"
+      OAUTH2_PROXY_ALLOW_INSECURE_REDIRECTS: "false"
+      OAUTH2_PROXY_SCOPE: "openid email profile"
+      OAUTH2_PROXY_LOG_LEVEL: debug
+      OAUTH2_PROXY_SKIP_PROVIDER_BUTTON: "true"
+      OAUTH2_PROXY_CODE_CHALLENGE_METHOD: "S256"
+
+      # Redirect whitelist to your IP host
+      OAUTH2_PROXY_WHITELIST_DOMAINS: "{{ vm_ip }}"
+
+      # Trust options for self-signed KC cert (ok in test)
+      OAUTH2_PROXY_SSL_INSECURE_SKIP_VERIFY: "{{ 'true' if ssl_insecure_skip_verify else 'false' }}"
+      OAUTH2_PROXY_PROVIDER_CA_FILE: "/etc/x509/https/tls.crt"
+      OAUTH2_PROXY_USE_SYSTEM_TRUST_STORE: "true"
+
+    volumes:
+      - ./certs:/etc/x509/https:ro
+    depends_on:
+      - keycloak
+      - nginx
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    volumes:
+      - "{{ html_dir }}:/usr/share/nginx/html:ro"
+      - "{{ nginx_conf_path }}:/etc/nginx/nginx.conf:ro"
+      - ./certs:/etc/x509/https:ro
+    ports:
+      - "80:80"
+      - "443:443"
+    restart: unless-stopped
+
+volumes:
+  pgdata:
