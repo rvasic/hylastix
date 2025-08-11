@@ -7,6 +7,7 @@ variable "location" {
 variable "vm_admin_username" {
   default = "azureuser"
 }
-variable "ssh_public_key" {
-  default = "/mnt/c/Users/noitr/.ssh/id_rsa.pub"
+variable "ssh_public_key_data" {
+  type      = string
+  sensitive = true
 }

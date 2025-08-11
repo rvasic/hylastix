@@ -1,0 +1,103 @@
+name: terraform-apply
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  TF_IN_AUTOMATION: "true"
+  ARM_USE_OIDC: "true"
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Prepare naming/env
+        id: prep
+        run: |
+          # region & admin user (defaults if not provided)
+          echo "TF_LOCATION=${{ secrets.TF_LOCATION || 'westeurope' }}" >> $GITHUB_ENV
+          echo "VM_ADMIN_USERNAME=${{ secrets.VM_ADMIN_USERNAME || 'azureuser' }}" >> $GITHUB_ENV
+
+          # safe-ish name seeds
+          REPO_SAFE=$(echo '${{ github.repository }}' | tr '[:upper:]/' '[:lower:]-' | tr -cd 'a-z0-9-')
+          RUN_KEY=${{ github.run_id }}
+
+          # backend names (<=24 chars for SA; make it unique but short)
+          RG_NAME="tfstate-${REPO_SAFE}-${RUN_KEY}"
+          SA_NAME="tf${RUN_KEY}${RANDOM}"    # storage acct: lowercase, <=24; random to avoid collisions
+          SA_NAME=$(echo "$SA_NAME" | tr -cd 'a-z0-9' | cut -c1-24)
+
+          echo "BACKEND_RG=$RG_NAME" >> $GITHUB_ENV
+          echo "BACKEND_SA=$SA_NAME" >> $GITHUB_ENV
+          echo "BACKEND_CN=tfstate" >> $GITHUB_ENV
+          echo "BACKEND_KEY=hylastix.tfstate" >> $GITHUB_ENV
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.7.5
+
+      # ------ BOOTSTRAP BACKEND ------
+      - name: Terraform init (bootstrap)
+        working-directory: terraform/backend-bootstrap
+        run: terraform init
+
+      - name: Terraform apply (bootstrap)
+        working-directory: terraform/backend-bootstrap
+        run: |
+          terraform apply -auto-approve \
+            -var "location=${TF_LOCATION}" \
+            -var "backend_resource_group=${BACKEND_RG}" \
+            -var "backend_storage_account=${BACKEND_SA}" \
+            -var "backend_container=${BACKEND_CN}" \
+            -var "backend_key=${BACKEND_KEY}" \
+            -var "sp_client_id=${{ fromJSON(secrets.AZURE_CREDENTIALS).clientId }}"
+
+      - name: Read backend outputs
+        id: bkend
+        working-directory: terraform/backend-bootstrap
+        run: |
+          echo "RG=$(terraform output -raw backend_resource_group)" >> $GITHUB_OUTPUT
+          echo "SA=$(terraform output -raw backend_storage_account)" >> $GITHUB_OUTPUT
+          echo "CN=$(terraform output -raw backend_container)" >> $GITHUB_OUTPUT
+          echo "KEY=$(terraform output -raw backend_key)" >> $GITHUB_OUTPUT
+
+      # ------ MAIN INFRA USING REMOTE STATE ------
+      - name: Terraform init (main with backend)
+        working-directory: terraform
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ steps.bkend.outputs.RG }}" \
+            -backend-config="storage_account_name=${{ steps.bkend.outputs.SA }}" \
+            -backend-config="container_name=${{ steps.bkend.outputs.CN }}" \
+            -backend-config="key=${{ steps.bkend.outputs.KEY }}"
+
+      - name: Terraform plan
+        working-directory: terraform
+        run: |
+          terraform plan \
+            -var "location=${TF_LOCATION}" \
+            -var "vm_admin_username=${VM_ADMIN_USERNAME}" \
+            -var "ssh_public_key_data=${{ secrets.SSH_PUBLIC_KEY }}"
+
+      - name: Terraform apply (main)
+        working-directory: terraform
+        run: |
+          terraform apply -auto-approve \
+            -var "location=${TF_LOCATION}" \
+            -var "vm_admin_username=${VM_ADMIN_USERNAME}" \
+            -var "ssh_public_key_data=${{ secrets.SSH_PUBLIC_KEY }}"
+
+      - name: Show outputs
+        working-directory: terraform
+        run: terraform output
