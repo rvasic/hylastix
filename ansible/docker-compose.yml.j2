@@ -51,7 +51,7 @@ services:
       OAUTH2_PROXY_REDIRECT_URL: "https://{{ vm_ip }}/oauth2/callback"
 
       # Protect static site served by nginx
-      OAUTH2_PROXY_UPSTREAMS: "http://nginx:80/"
+      OAUTH2_PROXY_UPSTREAMS: "static://200"
 
       # HTTP-only listener inside container
       OAUTH2_PROXY_HTTP_ADDRESS: "0.0.0.0:4180"
