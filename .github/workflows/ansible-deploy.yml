@@ -8,20 +8,24 @@ permissions:
 
 env:
   TF_IN_AUTOMATION: "true"
-  ARM_USE_OIDC: "true"
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      # Terraform azurerm provider creds (from JSON secret)
+      ARM_CLIENT_ID:       ${{ fromJSON(secrets.AZURE_CREDENTIALS).clientId }}
+      ARM_CLIENT_SECRET:   ${{ fromJSON(secrets.AZURE_CREDENTIALS).clientSecret }}
+      ARM_TENANT_ID:       ${{ fromJSON(secrets.AZURE_CREDENTIALS).tenantId }}
+      ARM_SUBSCRIPTION_ID: ${{ fromJSON(secrets.AZURE_CREDENTIALS).subscriptionId }}
+
     steps:
       - uses: actions/checkout@v4
 
       - name: Azure login (client secret)
         uses: azure/login@v2
         with:
-          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
 
 
       - name: Setup Terraform
@@ -48,7 +52,10 @@ jobs:
       - name: Setup SSH for Ansible
         run: |
           umask 077
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H "${{ steps.tfout.outputs.PUBLIC_IP }}" >> ~/.ssh/known_hosts
 
       - name: Install Ansible
         run: |
@@ -71,4 +78,4 @@ jobs:
           KC_ADMIN_PASS: ${{ secrets.KC_ADMIN_PASS || 'adminpassword' }}
         run: |
           ansible-playbook -i inventory.ini playbook.yml \
-            --extra-vars "vm_ip=${{ steps.tfout.outputs.PUBLIC_IP }} kc_admin_user=$KC_ADMIN_USER kc_admin_pass=$KC_ADMIN_PASS ssl_insecure_skip_verify=false"
+            --extra-vars "vm_ip=${{ steps.tfout.outputs.PUBLIC_IP }} kc_admin_user=$KC_ADMIN_USER kc_admin_pass=$KC_ADMIN_PASS ssl_insecure_skip_verify=true"

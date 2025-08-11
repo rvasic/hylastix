@@ -1,12 +1,6 @@
 name: terraform-destroy
 on:
   workflow_dispatch:
-    inputs:
-      destroy_backend:
-        description: "Also destroy backend storage (state)?"
-        type: choice
-        options: ["false", "true"]
-        default: "false"
 
 permissions:
   id-token: write
@@ -14,20 +8,23 @@ permissions:
 
 env:
   TF_IN_AUTOMATION: "true"
-  ARM_USE_OIDC: "true"
 
 jobs:
   destroy:
     runs-on: ubuntu-latest
+    env:
+      ARM_CLIENT_ID:       ${{ fromJSON(secrets.AZURE_CREDENTIALS).clientId }}
+      ARM_CLIENT_SECRET:   ${{ fromJSON(secrets.AZURE_CREDENTIALS).clientSecret }}
+      ARM_TENANT_ID:       ${{ fromJSON(secrets.AZURE_CREDENTIALS).tenantId }}
+      ARM_SUBSCRIPTION_ID: ${{ fromJSON(secrets.AZURE_CREDENTIALS).subscriptionId }}
+
     steps:
       - uses: actions/checkout@v4
 
       - name: Azure login (client secret)
         uses: azure/login@v2
         with:
-          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
 
 
       - name: Setup Terraform
@@ -35,11 +32,11 @@ jobs:
         with:
           terraform_version: 1.7.5
 
-      # ----- MAIN (with remote backend) -----
+      # ---------- MAIN (destroy infra that uses the remote state) ----------
       - name: Terraform init (main with backend)
         working-directory: terraform
         run: |
-          terraform init \
+          terraform init -input=false -no-color -lock-timeout=5m \
             -backend-config="resource_group_name=${{ vars.BACKEND_RG }}" \
             -backend-config="storage_account_name=${{ vars.BACKEND_SA }}" \
             -backend-config="container_name=${{ vars.BACKEND_CN }}" \
@@ -47,23 +44,21 @@ jobs:
 
       - name: Terraform destroy (main)
         working-directory: terraform
-        run: terraform destroy -auto-approve
+        run: terraform destroy -auto-approve -input=false -no-color -lock-timeout=5m
 
-      # ----- OPTIONAL: destroy backend bootstrap -----
+      # ---------- BOOTSTRAP (destroy backend resources) ----------
       - name: Terraform init (bootstrap)
-        if: ${{ inputs.destroy_backend == 'true' }}
         working-directory: terraform/backend-bootstrap
-        run: terraform init
+        run: terraform init -input=false -no-color
 
       - name: Terraform destroy (bootstrap)
-        if: ${{ inputs.destroy_backend == 'true' }}
         working-directory: terraform/backend-bootstrap
 
         run: |
-          terraform destroy -auto-approve \
+          terraform destroy -auto-approve -input=false -no-color -lock-timeout=5m \
             -var "location=${{ vars.TF_LOCATION || 'westeurope' }}" \
             -var "backend_resource_group=${{ vars.BACKEND_RG }}" \
             -var "backend_storage_account=${{ vars.BACKEND_SA }}" \
             -var "backend_container=${{ vars.BACKEND_CN }}" \
             -var "backend_key=${{ vars.BACKEND_KEY }}" \
-            -var "sp_client_id=${{ secrets.AZURE_CLIENT_ID }}"
+            -var "sp_client_id=${{ fromJSON(secrets.AZURE_CREDENTIALS).clientId }}"
